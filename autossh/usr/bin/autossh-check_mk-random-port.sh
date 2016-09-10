@@ -8,12 +8,13 @@
 
 NAME=${1}
 PORT="X"
-if [ -f "/var/lib/autossh-check_mk/${NAME}" ]
+F="/var/lib/autossh-check_mk/${NAME}.port"
+if [ -f "${F}" ]
 then
-  PORT=$(cat /var/lib/autossh-check_mk/${NAME})
+  PORT=$(cat ${F})
 else
   PORT=$(( ( RANDOM % 1000 )  + 16000 ))
-  echo ${PORT} > /var/lib/autossh-check_mk/${NAME}
+  echo ${PORT} > ${F}
 fi
 
 echo ${PORT}

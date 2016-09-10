@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Author: Pasi Lammi <pasi@pashi.net>
+# License: Apache License
+
 envfile=/etc/autossh-check_mk/${1}
 
 if [ ! -f "${envfile}" ]

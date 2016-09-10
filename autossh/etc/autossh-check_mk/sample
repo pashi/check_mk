@@ -1,4 +1,4 @@
-proxyport=16002
+proxyport=$(/usr/bin/autossh-check_mk-random-port.sh sample)
 user="root"
 ip="52.164.214.22"
 NUM=10

@@ -1,0 +1,11 @@
+[Unit]
+Description=AutoSSH for check_mk
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/autossh-check_mk.sh %i
+ExecStartPost=/usr/bin/autossh-check_mk_firewall.sh start %i
+ExecStop=/usr/bin/autossh-check_mk_firewall.sh stop %i
+
+[Install]
+WantedBy=multi-user.target

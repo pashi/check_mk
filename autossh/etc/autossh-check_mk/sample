@@ -1,0 +1,5 @@
+proxyport=16002
+user="root"
+ip="52.164.214.22"
+NUM=10
+OPTIONS="-l ${user} -L ${proxyport}:localhost:6556 ${ip}"

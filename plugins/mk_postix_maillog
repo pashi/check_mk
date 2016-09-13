@@ -11,7 +11,7 @@ from random import sample, SystemRandom
 newlines = ['\n', '\r\n', '\r']
 count_connected = 0
 count_no_queue_rejected = 0
-
+count_lost_connection_after_connect = 0
 
 def unbuffered(proc, stream='stdout'):
     stream = getattr(proc, stream)
@@ -35,12 +35,16 @@ def unbuffered(proc, stream='stdout'):
 def check_msg(msg):
     global count_connected
     global count_no_queue_rejected
+    global count_lost_connection_after_connect
     m_connected_from = re.match(r'^connect from ', msg)
     if m_connected_from:
       count_connected += 1
     m_no_queue_rejected = re.match(r'^NOQUEUE: reject', msg)
     if m_no_queue_rejected:
       count_no_queue_rejected += 1
+    m_lost_connection_after_connect = re.match(r'^lost connection after CONNECT', msg)
+    if m_lost_connection_after_connect:
+      count_lost_connection_after_connect += 1
     return True
 
 
@@ -55,4 +59,4 @@ for ln in unbuffered(ls):
     if d.has_key('MESSAGE'):
         check_msg(d['MESSAGE'])
 
-print "0 Postfix_logs connected=%s|no_queue_rejected=%s - OK connected=%s, no_queue_rejected=%s" % (count_connected,count_no_queue_rejected,count_connected,count_no_queue_rejected)
+print "0 Postfix_logs 10min_connected=%s|10min_no_queue_rejected=%s|10min_lost_connection_after_connect=%s OK 10min_connected=%s, 10min_no_queue_rejected=%s, 10min_lost_connection_after_connect=%s" % (count_connected,count_no_queue_rejected,count_lost_connection_after_connect,count_connected,count_no_queue_rejected,count_lost_connection_after_connect)

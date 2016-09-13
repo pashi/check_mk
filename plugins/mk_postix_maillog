@@ -1,0 +1,58 @@
+#!/usr/bin/env python
+
+import json
+import subprocess
+import re
+import sys
+import socket
+import contextlib
+from random import sample, SystemRandom
+
+newlines = ['\n', '\r\n', '\r']
+count_connected = 0
+count_no_queue_rejected = 0
+
+
+def unbuffered(proc, stream='stdout'):
+    stream = getattr(proc, stream)
+    with contextlib.closing(stream):
+        while True:
+            out = []
+            last = stream.read(1)
+            # Don't loop forever
+            if last == '' and proc.poll() is not None:
+                break
+            while last not in newlines:
+                # Don't loop forever
+                if last == '' and proc.poll() is not None:
+                    break
+                out.append(last)
+                last = stream.read(1)
+            out = ''.join(out)
+            yield out
+
+
+def check_msg(msg):
+    global count_connected
+    global count_no_queue_rejected
+    m_connected_from = re.match(r'^connect from ', msg)
+    if m_connected_from:
+      count_connected += 1
+    m_no_queue_rejected = re.match(r'^NOQUEUE: reject', msg)
+    if m_no_queue_rejected:
+      count_no_queue_rejected += 1
+    return True
+
+
+cmd = [ 'journalctl', '_SYSTEMD_UNIT=postfix.service', '-o', 'json', '--since','10 min ago' ]
+ls = subprocess.Popen( cmd, stdout=subprocess.PIPE)
+for ln in unbuffered(ls):
+    d = {}
+    try:
+        d = json.loads(ln)
+    except:
+        continue
+    if d.has_key('MESSAGE'):
+        check_msg(d['MESSAGE'])
+
+print "0 Postfix_logs connected=%s|no_queue_rejected=%s - OK connected=%s, no_queue_rejected=%s" % (count_connected,count_no_queue_rejected,count_connected,count_no_queue_rejected)

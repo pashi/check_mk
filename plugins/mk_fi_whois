@@ -1,0 +1,243 @@
+#!/usr/bin/env python
+
+import subprocess
+import re
+from datetime import datetime
+from datetime import timedelta
+#from bson import json_util
+import sys
+import time
+import json
+import random
+
+now = datetime.now()
+filename = '/tmp/mk_fi_whois.json'
+domainfile = '/etc/check_mk/fi_whois.cnf'
+domain_data = {}
+wait_check = 0
+domain_count = 0
+last_stat = 0
+old_stat = 0
+domains = []
+DEBUG = False
+FORCE_UPDATE = False
+
+domain_list = []
+
+time_now = time.time()
+
+class Domain:
+  domain = ''
+  data = None
+  expires = 0
+  days_to_expire = -1
+  last_check = 0
+  check_h = -1
+  notfound = False
+  whois_ok = None
+
+  def __init__(self,name,data={}):
+     self.domain = name
+     self.data = data
+     self.check_h = random.randint(0,23)
+
+  def set_expire(self, expires):
+     if type(expires).__name__ == 'int':
+         self.expires = expires
+
+  def set_last_check(self, t):
+      try:
+          self.last_check = int(t)
+      except:
+          pass
+
+  ### parse data and set expire date
+  def set_expire_from_data(self):
+     self.expires = whois_data_expires(self.data)
+     if self.expires:
+         self.days_to_expire = int((self.expires - time_now)/86400)
+
+  def set_data(self,data):
+     if len(data)>0:
+       self.data = data 
+       self.set_expire_from_data()
+
+  def get_data(self):
+     d = {}
+     d['lastcheck'] = int(self.last_check)
+     d['domain'] = self.domain
+     d['data'] = self.data
+     d['notfound'] = self.notfound
+     d['days_to_expire'] = self.get_days_to_expire()
+     d['days_last_check'] = self.get_days_last_check()
+     d['check_h'] = self.get_check_h()
+     d['whois_ok'] = self.whois_ok
+     return d
+
+  def set_from_cache(self,data):
+     if data.has_key('lastcheck'):
+         self.set_last_check(data['lastcheck'])
+     if data.has_key('data'):
+         self.data = data['data']
+     if data.has_key('check_h'):
+         self.check_h = data['check_h']
+     else:
+       check_h = random.randint(0,23)
+     if data.has_key('whois_ok'):
+         self.whois_ok = data['whois_ok']
+     self.set_expire_from_data()
+
+  def set_from_whois(self,data):
+     self.data = data
+     self.set_expire_from_data()
+     self.last_check = time_now
+
+  def set_data(self,name,value):
+     setattr(self,name,value)
+  def __str__(self):
+     return "domain: %s, expires: %s" % (self.domain,self.expires) 
+
+  def not_found(self):
+     self.notfound = True
+
+  def get_days_to_expire(self):
+     return self.days_to_expire
+  def get_days_last_check(self):
+     return int((time_now - self.last_check)/86400)
+  def get_check_h(self):
+     return self.check_h
+
+  def update_data(self):
+      try:
+          debug("update_data: %s" % (self.domain))
+          data = run_whois(self.domain)
+          debug("update_data: %s" % (data))
+          self.set_from_whois(data)
+          self.whois_ok = True
+      except:
+          debug("update_data failed")
+          self.whois_ok = False
+          pass
+
+  def is_data(self):
+      ret = False
+      if len(self.data) > 1:
+          ret = True
+      return ret
+
+def whois_data_expires(data):
+    if not data:
+      return
+    for line in data:
+      m = re.match(r'expires.*: ([0-9]+\.[0-9]+\.[0-9][0-9][0-9][0-9])',line)
+      if m:
+        date_object = datetime.strptime("%s 23:30" % (m.group(1)), '%d.%m.%Y %H:%M')
+        expire_time = int((date_object - datetime(1970,1,1)).total_seconds())
+        return expire_time
+
+def debug(msg):
+    global DEBUG
+    if DEBUG:
+      print msg
+
+def read_data():
+    domain_list = []
+    global domain_data
+    try:
+        with open(filename, 'rb') as f:
+            data = json.load(f)
+            for i in data:
+                k = i['domain']
+                d = Domain(k)
+                d.set_from_cache(i)
+                domain_data[k] = d
+    except:
+        debug("read_data fail")
+
+def save_data():
+    output = []
+    for d in domains:
+        data = domain_data[d].get_data()
+        debug("save data record: %s" % (data))
+        output.append(data)
+    try:
+        with open(filename, 'w') as f:
+            json.dump(output, f, indent=2, sort_keys=True)
+    except:
+        debug("save_data fail")
+        pass
+
+def get_domain_status(domain):
+    status = 0
+    ret = {}
+    global wait_check
+    d = None
+    if not domain_data.has_key(domain):
+        domain_data[domain] = Domain(domain)
+    d = domain_data[domain]
+    debug("get_domain_status: %s" % (d.domain))
+    if d.get_days_last_check()>7 or d.get_days_to_expire() == -1 or FORCE_UPDATE:
+       debug("domain %s require update last_check=%s days_to_expire=%s" % (domain,d.get_days_last_check(),d.get_days_to_expire()))
+       t = time.localtime(time_now)
+       if t.tm_hour == d.get_check_h() or FORCE_UPDATE:
+          debug("update to %s" % domain)
+          d.update_data()
+       else:
+            debug("last_check4")
+            wait_check += 1
+    if d.is_data() == False:
+        status = 1
+        message = 'domain whois not yet checked. Next check when hour match %s' % d.get_check_h()
+    elif d.notfound == True:
+        status = 2
+        message = 'domain not found'
+    elif d.get_days_to_expire() < 30:
+        ret['expiration'] = d.get_days_to_expire()
+        status = 1
+        message = "expired in %s days" %  d.get_days_to_expire()
+        if d.get_days_to_expire() < 15:
+           status = 2
+    else:
+        status = 0
+        message = 'domain expires in %s days' % d.get_days_to_expire()
+
+    ret['status'] = status
+    ret['message'] = message
+    return ret
+
+def run_whois(domain):
+    debug("run_whois: %s" % (domain))
+    data = []
+    command = [ '/bin/whois', domain ]
+    process = subprocess.Popen(command, stdout=subprocess.PIPE)
+    while True:
+        output = process.stdout.readline()
+        if output == '' and process.poll() is not None:
+            break
+        if output:
+            data.append(output.strip())
+    rc = process.poll()
+    return data
+
+### read configuration file for domains to check
+def load_domains():
+    global domains
+    with open(domainfile, 'r') as f:
+            for line in f.read().split("\n"):
+                m = re.match(r'([a-z0-9\-]+\.fi).*',line)
+                if m:
+                    domains.append(m.group(1))
+
+load_domains()
+read_data()
+debug(domain_data)
+for domain in domains:
+    domain_count += 1
+    ret = get_domain_status(domain)
+
+    print "%s Domain_Expiration_%s - %s" % (ret['status'],domain,ret['message'])
+status = 0
+print "0 whois.ficora.fi_check wait_check=%s|domain_count=%s OK - wait_check = %s, domain_count = %s" % (wait_check,domain_count,wait_check,domain_count)
+
+domain_data['dummy'] = now
+save_data()

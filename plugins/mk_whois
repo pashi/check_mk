@@ -1,0 +1,128 @@
+#!/usr/bin/env python
+
+import re
+import glob
+import os
+#import datetime
+import time
+from datetime import datetime
+
+warning_days = 21
+critical_days = 7
+
+domainfile = '/etc/check_mk/whois.cnf'
+cache_files = '/tmp/mk_domain_whois_cache/*'
+domains = {}
+
+time_now = time.time()
+
+def load_domains():
+    global domains
+    with open(domainfile, 'r') as f:
+            for line in f.read().split("\n"):
+                m = re.match(r'([a-z0-9\-]+\..*)',line)
+                if m:
+                    domains[m.group(1)] = {}
+
+
+def read_cache():
+    global domains
+    files = glob.glob(cache_files)
+    for f in files:
+        domain = os.path.basename(f)
+        if domains.has_key(domain):
+            with open(f, 'r') as f:
+                domains[domain] = whois_data_expires(domain,f.read().split("\n"))
+
+
+def whois_data_expires(domain,data):
+    ret = {'expired_time': None, 'expired_in': None, 'not_found':False}
+    if not data:
+        return ret
+    if len(data) < 1:
+        return ret
+    for line in data:
+        expire_time = 0
+
+        # ficora syntax
+        m = re.match(r'expires.*: ([0-9]+\.[0-9]+\.[0-9][0-9][0-9][0-9])',line)
+        
+        # some common
+        m2 = re.match(r'Registrar Registration Expiration Date: ([0-9]+\-[0-9]+\-[0-9]+)T([0-9]+:[0-9]+:[0-9]+)Z',line)
+
+        # Registry Expiry Date: 2017-07-17T14:32:13Z
+        m3 = re.match(r'Registry Expiry Date: ([0-9]+\-[0-9]+\-[0-9]+)T([0-9]+:[0-9]+:[0-9]+)Z',line)
+
+        # Registrar Registration Expiration Date: 2017-04-15T00:00:00.000Z
+        m4 = re.match(r'Registrar Registration Expiration Date: ([0-9]+\-[0-9]+\-[0-9]+)T([0-9]+:[0-9]+:[0-9]+)\.[0-9]+Z',line)
+
+        # expires:          2019-08-13
+        m5 = re.match(r'[eE]xpires: +([0-9][0-9][0-9][0-9]\-[0-9]+\-[0-9]+)',line)
+
+        # .ru domain
+        # free-date:     2017.02.23
+        m6 = re.match(r'free-date: +([0-9][0-9][0-9][0-9]\.[0-9]+\.[0-9]+)',line)
+
+        not_found_str = """No match for "%s""" % domain.upper()
+        not_found_str2 = "NOT FOUND"
+        if m:
+            date_object = datetime.strptime("%s 23:30" % (m.group(1)), '%d.%m.%Y %H:%M')
+            expire_time = int((date_object - datetime(1970,1,1)).total_seconds())
+        ## gandi syntax
+        elif m2:
+            date_object = datetime.strptime("%s %s" % (m2.group(1),m2.group(2)), "%Y-%m-%d %H:%M:%S")
+            expire_time = int((date_object - datetime(1970,1,1)).total_seconds())
+        elif m3:
+            date_object = datetime.strptime("%s %s" % (m3.group(1),m3.group(2)), "%Y-%m-%d %H:%M:%S")
+            expire_time = int((date_object - datetime(1970,1,1)).total_seconds())
+        elif m4:
+            date_object = datetime.strptime("%s %s" % (m4.group(1),m4.group(2)), "%Y-%m-%d %H:%M:%S")
+            expire_time = int((date_object - datetime(1970,1,1)).total_seconds())
+        elif m5:
+            date_object = datetime.strptime("%s 00:01" % (m5.group(1)), '%Y-%m-%d %H:%M')
+            expire_time = int((date_object - datetime(1970,1,1)).total_seconds())
+        elif m6:
+            date_object = datetime.strptime("%s 00:01" % (m6.group(1)), '%Y.%m.%d %H:%M')
+            expire_time = int((date_object - datetime(1970,1,1)).total_seconds())
+        elif line.find(not_found_str) > -1 or line.find(not_found_str2) > -1:
+            ret['not_found'] = True
+        if expire_time > 0:
+            ret['expired_time'] = expire_time
+            ret['expired_in'] = int((expire_time - time_now)/86400)
+    return ret
+
+def get_status(d):
+    if not d:
+        return 2
+    if d.has_key('expired_in'):
+        expired_in = d['expired_in']
+        if expired_in < critical_days:
+            return 2
+        if expired_in < warning_days:
+            return 1
+    return 0
+
+def print_domain_expires():
+    global domains
+    for domain in sorted(domains.keys()):
+        status = 0
+        msg = ''
+        d = domains[domain]
+        if len(d) == 0:
+            msg = 'no data'
+            status = 1
+        elif d['not_found'] == True:
+            status = 2
+            msg = 'not found'
+        elif d['expired_in'] == None:
+            status = 1
+            msg = 'can not parse whois data'
+        else:
+            status = get_status(d)
+            msg = 'domain expires in %s days' % (d['expired_in'])
+        print "%s Domain_Whois_Check_%s - %s" % (status,domain,msg)
+
+load_domains()
+read_cache()
+print_domain_expires()
+

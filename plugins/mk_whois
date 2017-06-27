@@ -64,7 +64,10 @@ def whois_data_expires(domain,data):
         m6 = re.match(r'free-date: +([0-9][0-9][0-9][0-9]\.[0-9]+\.[0-9]+)',line)
 
         not_found_str = """No match for "%s""" % domain.upper()
-        not_found_str2 = "NOT FOUND"
+
+        # at least .fi domains got this result
+        not_found_str2 = """Domain not found""" 
+
         if m:
             date_object = datetime.strptime("%s 23:30" % (m.group(1)), '%d.%m.%Y %H:%M')
             expire_time = int((date_object - datetime(1970,1,1)).total_seconds())
@@ -84,7 +87,9 @@ def whois_data_expires(domain,data):
         elif m6:
             date_object = datetime.strptime("%s 00:01" % (m6.group(1)), '%Y.%m.%d %H:%M')
             expire_time = int((date_object - datetime(1970,1,1)).total_seconds())
-        elif line.find(not_found_str) > -1 or line.find(not_found_str2) > -1:
+        elif line.find(not_found_str) > -1:
+            ret['not_found'] = True
+        elif line.find(not_found_str2) > -1:
             ret['not_found'] = True
         if expire_time > 0:
             ret['expired_time'] = expire_time
